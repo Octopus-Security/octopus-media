@@ -7,7 +7,6 @@ services:
       - BACKEND_URL=http://backend:3001
     networks:
       - octopus_network
-      - media_internal
 
   backend:
     build: ./backend
