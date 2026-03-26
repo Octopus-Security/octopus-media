@@ -1,0 +1,61 @@
+services:
+  frontend:
+    build: ./frontend
+    container_name: octopus_media_frontend
+    restart: unless-stopped
+    environment:
+      - BACKEND_URL=http://backend:3001
+    networks:
+      - octopus_network
+      - media_internal
+
+  backend:
+    build: ./backend
+    container_name: octopus_media_backend
+    restart: unless-stopped
+    environment:
+      - PORT=3001
+      - PGHOST=db
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER:-media}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB:-media}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://octopus-auth:3002}
+      - CORTEX_URL=${CORTEX_URL:-http://octopus-cortex:3010}
+      - CORS_ORIGIN=${CORS_ORIGIN:-https://media.octopustechnology.net}
+    networks:
+      - octopus_network
+      - media_internal
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: octopus_media_db
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-media}
+      - POSTGRES_USER=${POSTGRES_USER:-media}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-media}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - media_internal
+
+volumes:
+  postgres_data:
+
+networks:
+  octopus_network:
+    external: true
+  media_internal:
+    internal: true
