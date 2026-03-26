@@ -6,7 +6,6 @@ CREATE TABLE media_entries (
   type        VARCHAR(10)  NOT NULL CHECK (type IN ('anime','movie','tv','music')),
   title       VARCHAR(255),
   status      VARCHAR(10)  NOT NULL DEFAULT 'active' CHECK (status IN ('active','finished')),
-  rec_source  VARCHAR(255),
   notes       TEXT,
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()

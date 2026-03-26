@@ -95,7 +95,6 @@ export default function FinishedTab({ entries, onRate, onDelete }: Props) {
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <p className="text-text font-medium text-sm truncate" title={entryLabel(e)}>{entryLabel(e)}</p>
-                  {e.rec_source && <p className="text-muted text-[11px] mt-0.5">rec by {e.rec_source}</p>}
                   <p className="text-muted text-[11px] mt-0.5">{formatDate(e.finished_at)}</p>
                 </div>
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${TYPE_BADGE[e.type]}`}>

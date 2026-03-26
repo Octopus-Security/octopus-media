@@ -14,7 +14,6 @@ export interface MediaEntry {
   type: EntryType;
   title: string | null;
   status: EntryStatus;
-  rec_source: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;

@@ -23,7 +23,7 @@ const CORTEX_URL = process.env.CORTEX_URL       || 'http://octopus-cortex:3010';
 const ENTRY_SELECT = `
   SELECT
     me.id, me.user_id, me.type, me.title, me.status,
-    me.rec_source, me.notes, me.created_at, me.updated_at,
+    me.notes, me.created_at, me.updated_at,
     ep.current_season, ep.current_episode,
     md.artist, md.album, md.song,
     r.rating, r.finished_at
@@ -120,7 +120,7 @@ async function build() {
 
   // ── Entries — create ──────────────────────────────────────────────────────────
   app.post('/api/entries', async (req, reply) => {
-    const { type, title, rec_source, notes, starting_season = 1, starting_episode = 1,
+    const { type, title, notes, starting_season = 1, starting_episode = 1,
             artist, album, song } = req.body;
     const user_id = req.session.user.username;
 
@@ -138,9 +138,9 @@ async function build() {
     try {
       await client.query('BEGIN');
       const { rows: [entry] } = await client.query(
-        `INSERT INTO media_entries (user_id, type, title, rec_source, notes)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [user_id, type, title?.trim() || null, rec_source?.trim() || null, notes?.trim() || null],
+        `INSERT INTO media_entries (user_id, type, title, notes)
+         VALUES ($1,$2,$3,$4) RETURNING *`,
+        [user_id, type, title?.trim() || null, notes?.trim() || null],
       );
 
       if (type === 'anime' || type === 'tv') {
@@ -181,18 +181,17 @@ async function build() {
     );
     if (!entry) return reply.code(404).send({ error: 'Not found.' });
 
-    const { title, rec_source, notes, current_season, current_episode, artist, album, song } = req.body;
+    const { title, notes, current_season, current_episode, artist, album, song } = req.body;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query(
         `UPDATE media_entries SET
            title = COALESCE($1, title),
-           rec_source = $2,
-           notes = $3,
+           notes = $2,
            updated_at = now()
-         WHERE id = $4`,
-        [title?.trim() || null, rec_source?.trim() || null, notes?.trim() || null, id],
+         WHERE id = $3`,
+        [title?.trim() || null, notes?.trim() || null, id],
       );
 
       if ((entry.type === 'anime' || entry.type === 'tv') && (current_season != null || current_episode != null)) {

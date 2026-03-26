@@ -18,7 +18,6 @@ const TYPE_LABELS: Record<EntryType, string> = {
 
 export default function AddEntryModal({ type, onClose, onCreated }: Props) {
   const [title,     setTitle]     = useState('');
-  const [recSource, setRecSource] = useState('');
   const [notes,     setNotes]     = useState('');
   const [season,    setSeason]    = useState(1);
   const [episode,   setEpisode]   = useState(1);
@@ -46,7 +45,6 @@ export default function AddEntryModal({ type, onClose, onCreated }: Props) {
         body: JSON.stringify({
           type,
           title: title.trim() || undefined,
-          rec_source: recSource.trim() || undefined,
           notes: notes.trim() || undefined,
           starting_season: isEpisodic ? season : undefined,
           starting_episode: isEpisodic ? episode : undefined,
@@ -132,16 +130,6 @@ export default function AddEntryModal({ type, onClose, onCreated }: Props) {
               </div>
             </div>
           )}
-
-          {/* Recommended by */}
-          <div>
-            <label className="block text-xs text-muted mb-1.5">Recommended by</label>
-            <input
-              value={recSource} onChange={e => setRecSource(e.target.value)}
-              className="w-full bg-bg border border-border rounded px-3 py-2 text-sm text-text outline-none focus:border-accent placeholder:text-muted"
-              placeholder="Who recommended it?"
-            />
-          </div>
 
           {/* Notes */}
           <div>
