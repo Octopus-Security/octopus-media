@@ -4,6 +4,7 @@ const Fastify      = require('fastify');
 const cors         = require('@fastify/cors');
 const cookie       = require('@fastify/cookie');
 const session      = require('@fastify/session');
+const PgStore      = require('connect-pg-simple')(require('express-session'));
 const axios        = require('axios');
 const { Pool }     = require('pg');
 
@@ -34,7 +35,19 @@ const ENTRY_SELECT = `
 `;
 
 async function build() {
+  // ── Ensure sessions table exists ──────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS session (
+      sid    VARCHAR NOT NULL PRIMARY KEY,
+      sess   JSON    NOT NULL,
+      expire TIMESTAMP(6) NOT NULL
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS session_expire_idx ON session (expire)`);
+
   const app = Fastify({ logger: true });
+
+  const pgStore = new PgStore({ pool, tableName: 'session' });
 
   // ── Plugins ──────────────────────────────────────────────────────────────────
   await app.register(cors, { origin: process.env.CORS_ORIGIN || true, credentials: true });
@@ -43,6 +56,7 @@ async function build() {
     secret: process.env.SESSION_SECRET || 'media-session-secret-change-me-32ch+',
     cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 },
     saveUninitialized: false,
+    store: pgStore,
   });
 
   // ── IP allowlist ──────────────────────────────────────────────────────────────
