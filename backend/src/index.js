@@ -4,7 +4,6 @@ const Fastify      = require('fastify');
 const cors         = require('@fastify/cors');
 const cookie       = require('@fastify/cookie');
 const session      = require('@fastify/session');
-const PgStore      = require('connect-pg-simple')(require('express-session'));
 const axios        = require('axios');
 const { Pool }     = require('pg');
 
@@ -47,7 +46,23 @@ async function build() {
 
   const app = Fastify({ logger: true });
 
-  const pgStore = new PgStore({ pool, tableName: 'session' });
+  const pgStore = {
+    get: (sid, cb) => {
+      pool.query('SELECT sess FROM session WHERE sid=$1 AND expire>NOW()', [sid])
+        .then(({ rows }) => cb(null, rows[0]?.sess ?? null))
+        .catch(cb);
+    },
+    set: (sid, sess, cb) => {
+      const expire = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      pool.query(
+        'INSERT INTO session(sid,sess,expire) VALUES($1,$2,$3) ON CONFLICT(sid) DO UPDATE SET sess=$2,expire=$3',
+        [sid, JSON.stringify(sess), expire],
+      ).then(() => cb?.()).catch(cb);
+    },
+    destroy: (sid, cb) => {
+      pool.query('DELETE FROM session WHERE sid=$1', [sid]).then(() => cb?.()).catch(cb);
+    },
+  };
 
   // ── Plugins ──────────────────────────────────────────────────────────────────
   await app.register(cors, { origin: process.env.CORS_ORIGIN || true, credentials: true });
