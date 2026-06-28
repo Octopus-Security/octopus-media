@@ -13,6 +13,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="border-b border-border bg-surface px-6 py-3 flex items-center gap-3">
           <span className="text-accent font-bold text-lg tracking-tight">Octopus</span>
           <span className="text-text font-semibold text-lg">Media</span>
+          <div className="ml-auto">
+            <a href="/api/auth/logout" className="text-xs text-muted hover:text-text transition-colors">Sign out</a>
+          </div>
         </nav>
         <main className="max-w-5xl mx-auto px-4 py-6">{children}</main>
       </body>

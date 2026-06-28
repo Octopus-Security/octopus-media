@@ -34,6 +34,11 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(`${AUTH_LOGIN_BASE}/login?redirect=${returnUrl}`);
   }
 
+  // Logged in — don't let the /login page redirect to auth again
+  if (pathname === '/login') {
+    return NextResponse.redirect(new URL('/', req.url));
+  }
+
   return NextResponse.next();
 }
 
