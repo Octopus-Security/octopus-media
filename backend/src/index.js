@@ -102,12 +102,12 @@ async function build() {
 
   app.post('/api/auth/logout', async (req, reply) => {
     const back = encodeURIComponent(`https://${req.headers.host || 'media.octopustechnology.net'}/`);
-    return reply.redirect(302, `${AUTH_LOGIN_BASE}/logout?redirect=${back}`);
+    return reply.redirect(`${AUTH_LOGIN_BASE}/logout?redirect=${back}`, 302);
   });
 
   app.get('/api/auth/logout', async (req, reply) => {
     const back = encodeURIComponent(`https://${req.headers.host || 'media.octopustechnology.net'}/`);
-    return reply.redirect(302, `${AUTH_LOGIN_BASE}/logout?redirect=${back}`);
+    return reply.redirect(`${AUTH_LOGIN_BASE}/logout?redirect=${back}`, 302);
   });
 
   app.get('/api/auth/me', async (req, reply) => {
