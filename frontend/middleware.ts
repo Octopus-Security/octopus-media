@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:3001';
+const BACKEND_URL   = process.env.BACKEND_URL    || 'http://backend:3001';
+const AUTH_LOGIN_BASE = process.env.AUTH_PUBLIC_URL || 'https://auth.octopustechnology.net';
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -29,12 +30,8 @@ export async function middleware(req: NextRequest) {
   }
 
   if (status === 401) {
-    if (pathname === '/login') return NextResponse.next();
-    return NextResponse.redirect(new URL('/login', req.url));
-  }
-
-  if (pathname === '/login') {
-    return NextResponse.redirect(new URL('/', req.url));
+    const returnUrl = encodeURIComponent(req.nextUrl.toString());
+    return NextResponse.redirect(`${AUTH_LOGIN_BASE}/login?redirect=${returnUrl}`);
   }
 
   return NextResponse.next();

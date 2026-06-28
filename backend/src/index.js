@@ -3,7 +3,6 @@
 const Fastify      = require('fastify');
 const cors         = require('@fastify/cors');
 const cookie       = require('@fastify/cookie');
-const session      = require('@fastify/session');
 const axios        = require('axios');
 const { Pool }     = require('pg');
 
@@ -15,8 +14,28 @@ const pool = new Pool({
   database: process.env.PGDATABASE || 'media',
 });
 
-const AUTH_URL   = process.env.AUTH_SERVICE_URL || 'http://octopus-auth:3002';
-const CORTEX_URL = process.env.CORTEX_URL       || 'http://octopus-cortex:3010';
+const AUTH_URL      = process.env.AUTH_SERVICE_URL || 'http://octopus-auth:3002';
+const AUTH_LOGIN_BASE = process.env.AUTH_PUBLIC_URL || 'https://auth.octopustechnology.net';
+const CORTEX_URL    = process.env.CORTEX_URL       || 'http://octopus-cortex:3010';
+
+// ── Stateless SSO auth ────────────────────────────────────────────────────────
+const SSO_COOKIE   = 'octopus_sso';
+const _verifyCache = new Map();
+
+async function verifyToken(token) {
+  const cached = _verifyCache.get(token);
+  if (cached && cached.exp > Date.now()) return cached.user;
+  try {
+    const r = await axios.post(`${AUTH_URL}/api/auth/verify`, {}, {
+      headers: { Authorization: `Bearer ${token}` }, timeout: 5000,
+    });
+    if (r.data && r.data.valid && r.data.user) {
+      _verifyCache.set(token, { user: r.data.user, exp: Date.now() + 5 * 60 * 1000 });
+      return r.data.user;
+    }
+  } catch { /* invalid or auth unreachable */ }
+  return null;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -34,45 +53,11 @@ const ENTRY_SELECT = `
 `;
 
 async function build() {
-  // ── Ensure sessions table exists ──────────────────────────────────────────────
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS session (
-      sid    VARCHAR NOT NULL PRIMARY KEY,
-      sess   JSON    NOT NULL,
-      expire TIMESTAMP(6) NOT NULL
-    )
-  `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS session_expire_idx ON session (expire)`);
-
   const app = Fastify({ logger: true });
-
-  const pgStore = {
-    get: (sid, cb) => {
-      pool.query('SELECT sess FROM session WHERE sid=$1 AND expire>NOW()', [sid])
-        .then(({ rows }) => cb(null, rows[0]?.sess ?? null))
-        .catch(cb);
-    },
-    set: (sid, sess, cb) => {
-      const expire = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      pool.query(
-        'INSERT INTO session(sid,sess,expire) VALUES($1,$2,$3) ON CONFLICT(sid) DO UPDATE SET sess=$2,expire=$3',
-        [sid, JSON.stringify(sess), expire],
-      ).then(() => cb?.()).catch(cb);
-    },
-    destroy: (sid, cb) => {
-      pool.query('DELETE FROM session WHERE sid=$1', [sid]).then(() => cb?.()).catch(cb);
-    },
-  };
 
   // ── Plugins ──────────────────────────────────────────────────────────────────
   await app.register(cors, { origin: process.env.CORS_ORIGIN || true, credentials: true });
   await app.register(cookie);
-  await app.register(session, {
-    secret: process.env.SESSION_SECRET || 'media-session-secret-change-me-32ch+',
-    cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 },
-    saveUninitialized: false,
-    store: pgStore,
-  });
 
   // ── IP allowlist ──────────────────────────────────────────────────────────────
   app.addHook('onRequest', async (req, reply) => {
@@ -92,10 +77,19 @@ async function build() {
     }
   });
 
+  // ── Set req.user from SSO cookie ──────────────────────────────────────────────
+  app.addHook('preHandler', async (req) => {
+    const token = req.cookies[SSO_COOKIE];
+    if (token) {
+      const user = await verifyToken(token);
+      if (user) req.user = { username: user.username, role: user.role, token };
+    }
+  });
+
   // ── Auth gate ─────────────────────────────────────────────────────────────────
   app.addHook('preHandler', async (req, reply) => {
     if (req.url === '/health' || req.url.startsWith('/api/auth/')) return;
-    if (!req.session.user) return reply.code(401).send({ error: 'Not authenticated' });
+    if (!req.user) return reply.code(401).send({ error: 'Not authenticated' });
   });
 
   // ── Health ────────────────────────────────────────────────────────────────────
@@ -103,36 +97,28 @@ async function build() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────────
   app.post('/api/auth/login', async (req, reply) => {
-    const { username, password } = req.body;
-    try {
-      const r = await axios.post(`${AUTH_URL}/api/auth/login`, { username, password }, {
-        timeout: 3000,
-        validateStatus: () => true,
-      });
-      if (r.data.success) {
-        req.session.user = { username };
-        return { ok: true };
-      }
-      return reply.code(401).send({ error: r.data.error || 'Invalid credentials.' });
-    } catch {
-      return reply.code(503).send({ error: 'Auth service unavailable.' });
-    }
+    return reply.code(400).send({ error: 'Login is managed centrally.', loginUrl: `${AUTH_LOGIN_BASE}/login` });
   });
 
-  app.post('/api/auth/logout', async (req) => {
-    await new Promise(resolve => req.session.destroy(resolve));
-    return { ok: true };
+  app.post('/api/auth/logout', async (req, reply) => {
+    const back = encodeURIComponent(`https://${req.headers.host || 'media.octopustechnology.net'}/`);
+    return reply.redirect(302, `${AUTH_LOGIN_BASE}/logout?redirect=${back}`);
+  });
+
+  app.get('/api/auth/logout', async (req, reply) => {
+    const back = encodeURIComponent(`https://${req.headers.host || 'media.octopustechnology.net'}/`);
+    return reply.redirect(302, `${AUTH_LOGIN_BASE}/logout?redirect=${back}`);
   });
 
   app.get('/api/auth/me', async (req, reply) => {
-    if (req.session.user) return { user: req.session.user };
+    if (req.user) return { user: { username: req.user.username } };
     return reply.code(401).send({ error: 'Not authenticated' });
   });
 
   // ── Entries — list ────────────────────────────────────────────────────────────
   app.get('/api/entries', async (req) => {
     const { type, status } = req.query;
-    const user_id = req.session.user.username;
+    const user_id = req.user.username;
     const conditions = ['me.user_id = $1'];
     const params = [user_id];
 
@@ -151,7 +137,7 @@ async function build() {
   app.post('/api/entries', async (req, reply) => {
     const { type, title, notes, starting_season = 1, starting_episode = 1,
             artist, album, song } = req.body;
-    const user_id = req.session.user.username;
+    const user_id = req.user.username;
 
     if (!type || !['anime','movie','tv','music'].includes(type)) {
       return reply.code(400).send({ error: 'Invalid type.' });
@@ -203,7 +189,7 @@ async function build() {
   // ── Entries — update ──────────────────────────────────────────────────────────
   app.patch('/api/entries/:id', async (req, reply) => {
     const { id } = req.params;
-    const user_id = req.session.user.username;
+    const user_id = req.user.username;
 
     const { rows: [entry] } = await pool.query(
       `SELECT * FROM media_entries WHERE id = $1 AND user_id = $2`, [id, user_id],
@@ -261,7 +247,7 @@ async function build() {
   // ── Entries — finish ──────────────────────────────────────────────────────────
   app.patch('/api/entries/:id/finish', async (req, reply) => {
     const { id } = req.params;
-    const user_id = req.session.user.username;
+    const user_id = req.user.username;
     const { rows: [entry] } = await pool.query(
       `SELECT * FROM media_entries WHERE id = $1 AND user_id = $2`, [id, user_id],
     );
@@ -292,7 +278,7 @@ async function build() {
   app.patch('/api/entries/:id/rate', async (req, reply) => {
     const { id } = req.params;
     const { rating } = req.body;
-    const user_id = req.session.user.username;
+    const user_id = req.user.username;
 
     if (!['thumbs_up','thumbs_down', null].includes(rating)) {
       return reply.code(400).send({ error: 'Invalid rating.' });
@@ -314,7 +300,7 @@ async function build() {
   // ── Entries — delete ──────────────────────────────────────────────────────────
   app.delete('/api/entries/:id', async (req, reply) => {
     const { id } = req.params;
-    const user_id = req.session.user.username;
+    const user_id = req.user.username;
     const { rowCount } = await pool.query(
       `DELETE FROM media_entries WHERE id = $1 AND user_id = $2`, [id, user_id],
     );
