@@ -4,7 +4,7 @@ services:
     container_name: octopus_media_frontend
     restart: unless-stopped
     environment:
-      - BACKEND_URL=http://backend:3001
+      - BACKEND_URL=http://media-backend:3001
     networks:
       - octopus_network
 
@@ -24,8 +24,10 @@ services:
       - CORTEX_URL=${CORTEX_URL:-http://octopus-cortex:3010}
       - CORS_ORIGIN=${CORS_ORIGIN:-https://media.octopustechnology.net}
     networks:
-      - octopus_network
-      - media_internal
+      octopus_network:
+        aliases:
+          - media-backend
+      media_internal:
     depends_on:
       db:
         condition: service_healthy
