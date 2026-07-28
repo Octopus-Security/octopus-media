@@ -16,21 +16,39 @@ const pool = new Pool({
 
 const AUTH_URL      = process.env.AUTH_SERVICE_URL || 'http://octopus-auth:3002';
 const AUTH_LOGIN_BASE = process.env.AUTH_PUBLIC_URL || 'https://auth.octopustechnology.net';
-const CORTEX_URL    = process.env.CORTEX_URL       || 'http://octopus-cortex:3010';
+
+// Machine-to-machine access for cortex, on the docker network only — same
+// x-internal-secret pattern budget uses. Entries are keyed by username and a bot
+// has no session, so internal calls act as one fixed owner.
+const INTERNAL_SECRET = process.env.INTERNAL_SECRET || '';
+const MEDIA_OWNER     = process.env.MEDIA_OWNER     || 'psychopathy';
 
 // ── Stateless SSO auth ────────────────────────────────────────────────────────
 const SSO_COOKIE   = 'octopus_sso';
+// Verified tokens cached 5 min, bounded and swept — an unevicted Map keyed by
+// token grows for the lifetime of the process.
+const VERIFY_TTL_MS    = 5 * 60 * 1000;
+const VERIFY_CACHE_MAX = 500;
 const _verifyCache = new Map();
+
+function cacheSet(token, user) {
+  const now = Date.now();
+  for (const [k, v] of _verifyCache) if (v.exp <= now) _verifyCache.delete(k);
+  // Map iterates in insertion order, so this evicts oldest-first.
+  while (_verifyCache.size >= VERIFY_CACHE_MAX) _verifyCache.delete(_verifyCache.keys().next().value);
+  _verifyCache.set(token, { user, exp: now + VERIFY_TTL_MS });
+}
 
 async function verifyToken(token) {
   const cached = _verifyCache.get(token);
   if (cached && cached.exp > Date.now()) return cached.user;
+  if (cached) _verifyCache.delete(token);
   try {
     const r = await axios.post(`${AUTH_URL}/api/auth/verify`, {}, {
       headers: { Authorization: `Bearer ${token}` }, timeout: 5000,
     });
     if (r.data && r.data.valid && r.data.user) {
-      _verifyCache.set(token, { user: r.data.user, exp: Date.now() + 5 * 60 * 1000 });
+      cacheSet(token, r.data.user);
       return r.data.user;
     }
   } catch { /* invalid or auth unreachable */ }
@@ -59,26 +77,27 @@ async function build() {
   await app.register(cors, { origin: process.env.CORS_ORIGIN || true, credentials: true });
   await app.register(cookie);
 
-  // ── IP allowlist ──────────────────────────────────────────────────────────────
-  app.addHook('onRequest', async (req, reply) => {
-    if (req.url === '/health') return;
-    const forwarded = req.headers['x-forwarded-for'];
-    const ip = (forwarded ? forwarded.split(',')[0].trim() : req.ip || '').replace('::ffff:', '');
-    try {
-      const r = await axios.get(`${CORTEX_URL}/api/check-ip`, {
-        headers: { 'x-forwarded-for': ip },
-        timeout: 2000,
-      });
-      if (!r.data.allowed) {
-        return reply.code(403).send({ error: 'Access denied. Request access via Discord.' });
-      }
-    } catch {
-      return reply.code(403).send({ error: 'IP check unavailable.' });
+  // No IP allowlist. This used to call cortex's /api/check-ip on every request,
+  // on top of the SSO gate below — two independent gates for a watch list. It
+  // made the app unusable from a phone (every new mobile IP was a lockout, and
+  // a cortex hiccup 403'd everything), while adding nothing: the SSO cookie
+  // already establishes who you are, and forced 2FA backs it.
+
+  // ── Internal (cortex) auth ────────────────────────────────────────────────────
+  // Runs before the SSO hook so machine calls never need a cookie. Fails closed:
+  // if INTERNAL_SECRET is unset, /api/internal/* is unreachable rather than open.
+  app.addHook('preHandler', async (req, reply) => {
+    if (!req.url.startsWith('/api/internal/')) return;
+    const given = req.headers['x-internal-secret'];
+    if (!INTERNAL_SECRET || given !== INTERNAL_SECRET) {
+      return reply.code(401).send({ error: 'Invalid internal secret.' });
     }
+    req.user = { username: MEDIA_OWNER, role: 'internal' };
   });
 
   // ── Set req.user from SSO cookie ──────────────────────────────────────────────
   app.addHook('preHandler', async (req) => {
+    if (req.user) return;                       // already authenticated internally
     const token = req.cookies[SSO_COOKIE];
     if (token) {
       const user = await verifyToken(token);
@@ -113,6 +132,99 @@ async function build() {
   app.get('/api/auth/me', async (req, reply) => {
     if (req.user) return { user: { username: req.user.username } };
     return reply.code(401).send({ error: 'Not authenticated' });
+  });
+
+  // ── Internal API (cortex) ─────────────────────────────────────────────────────
+  // Deliberately title-based rather than id-based: these are driven from chat
+  // ("bump Frieren to episode 9"), and requiring an opaque id would mean two
+  // round trips and a lookup the model would rather hallucinate.
+
+  // Resolve a title to one entry. Exact (case-insensitive) wins; otherwise a
+  // unique substring match. Ambiguity is an error, never a guess.
+  async function findByTitle(title) {
+    const { rows } = await pool.query(
+      `${ENTRY_SELECT} WHERE me.user_id = $1 AND me.title IS NOT NULL`, [MEDIA_OWNER],
+    );
+    const needle = String(title || '').trim().toLowerCase();
+    if (!needle) return { error: 'A title is required.' };
+    const exact = rows.filter(r => r.title.toLowerCase() === needle);
+    if (exact.length === 1) return { entry: exact[0] };
+    const partial = rows.filter(r => r.title.toLowerCase().includes(needle));
+    if (partial.length === 1) return { entry: partial[0] };
+    if (partial.length > 1) {
+      return { error: `"${title}" matches ${partial.length} entries: ${partial.map(r => r.title).join(', ')}. Be more specific.` };
+    }
+    return { error: `No entry matching "${title}".` };
+  }
+
+  app.get('/api/internal/entries', async (req) => {
+    const { status = 'watching', type } = req.query;
+    const conditions = ['me.user_id = $1'];
+    const params = [MEDIA_OWNER];
+    if (status && status !== 'all') { params.push(status); conditions.push(`me.status = $${params.length}`); }
+    if (type)                       { params.push(type);   conditions.push(`me.type = $${params.length}`); }
+    const { rows } = await pool.query(
+      `${ENTRY_SELECT} WHERE ${conditions.join(' AND ')} ORDER BY me.updated_at DESC`, params,
+    );
+    return {
+      entries: rows.map(r => ({
+        id: r.id, type: r.type, title: r.title, status: r.status,
+        season: r.current_season, episode: r.current_episode,
+        artist: r.artist, album: r.album, song: r.song,
+        rating: r.rating, notes: r.notes,
+      })),
+    };
+  });
+
+  app.post('/api/internal/progress', async (req, reply) => {
+    const { title, season, episode, advance } = req.body || {};
+    const found = await findByTitle(title);
+    if (found.error) return reply.code(404).send({ error: found.error });
+    const e = found.entry;
+    if (e.type !== 'anime' && e.type !== 'tv') {
+      return reply.code(400).send({ error: `"${e.title}" is a ${e.type}; it has no episode progress.` });
+    }
+
+    // `advance` is the common case from chat — "watched another episode".
+    const nextEpisode = advance
+      ? (e.current_episode || 0) + 1
+      : (episode != null ? parseInt(episode) : null);
+    const nextSeason = season != null ? parseInt(season) : null;
+    if (nextEpisode == null && nextSeason == null) {
+      return reply.code(400).send({ error: 'Provide season, episode, or advance:true.' });
+    }
+
+    await pool.query(
+      `INSERT INTO episode_progress (entry_id, current_season, current_episode) VALUES ($1,$2,$3)
+       ON CONFLICT (entry_id) DO UPDATE SET
+         current_season  = COALESCE($2, episode_progress.current_season),
+         current_episode = COALESCE($3, episode_progress.current_episode)`,
+      [e.id, nextSeason, nextEpisode],
+    );
+    await pool.query(`UPDATE media_entries SET updated_at = now() WHERE id = $1`, [e.id]);
+
+    const { rows: [full] } = await pool.query(`${ENTRY_SELECT} WHERE me.id = $1`, [e.id]);
+    return { ok: true, title: full.title, season: full.current_season, episode: full.current_episode };
+  });
+
+  app.post('/api/internal/entries', async (req, reply) => {
+    const { type, title, notes, season = 1, episode = 1 } = req.body || {};
+    if (!['anime', 'movie', 'tv'].includes(type)) {
+      return reply.code(400).send({ error: 'type must be anime, movie or tv.' });
+    }
+    if (!title?.trim()) return reply.code(400).send({ error: 'Title is required.' });
+
+    const { rows: [entry] } = await pool.query(
+      `INSERT INTO media_entries (user_id, type, title, notes) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [MEDIA_OWNER, type, title.trim(), notes?.trim() || null],
+    );
+    if (type === 'anime' || type === 'tv') {
+      await pool.query(
+        `INSERT INTO episode_progress (entry_id, current_season, current_episode) VALUES ($1,$2,$3)`,
+        [entry.id, parseInt(season) || 1, parseInt(episode) || 1],
+      );
+    }
+    return { ok: true, id: entry.id, title: entry.title, type: entry.type };
   });
 
   // ── Entries — list ────────────────────────────────────────────────────────────

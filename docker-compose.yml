@@ -21,7 +21,9 @@ services:
       - PGDATABASE=${POSTGRES_DB:-media}
       - SESSION_SECRET=${SESSION_SECRET}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://octopus-auth:3002}
-      - CORTEX_URL=${CORTEX_URL:-http://octopus-cortex:3010}
+      # Machine-to-machine auth for cortex (chat-driven show/episode updates).
+      - INTERNAL_SECRET=${INTERNAL_SECRET:-}
+      - MEDIA_OWNER=${MEDIA_OWNER:-psychopathy}
       - CORS_ORIGIN=${CORS_ORIGIN:-https://media.octopustechnology.net}
     networks:
       octopus_network:

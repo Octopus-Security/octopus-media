@@ -10,13 +10,12 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const ip     = req.headers.get('x-forwarded-for') || '';
   const cookie = req.headers.get('cookie') || '';
 
   let status: number;
   try {
     const res = await fetch(`${BACKEND_URL}/api/auth/me`, {
-      headers: { 'x-forwarded-for': ip, cookie },
+      headers: { cookie },
       cache: 'no-store',
     });
     status = res.status;
@@ -24,11 +23,8 @@ export async function middleware(req: NextRequest) {
     return new NextResponse('Service unavailable.', { status: 503 });
   }
 
-  if (status === 403) {
-    if (pathname === '/denied') return NextResponse.next();
-    return NextResponse.redirect(new URL('/denied', req.url));
-  }
-
+  // The backend no longer has an IP allowlist, so 403 is not an access-denied
+  // signal any more — only 401 (not signed in) is.
   if (status === 401) {
     const returnUrl = encodeURIComponent(req.nextUrl.toString());
     return NextResponse.redirect(`${AUTH_LOGIN_BASE}/login?redirect=${returnUrl}`);
