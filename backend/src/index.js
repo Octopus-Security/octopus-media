@@ -18,10 +18,39 @@ const AUTH_URL      = process.env.AUTH_SERVICE_URL || 'http://octopus-auth:3002'
 const AUTH_LOGIN_BASE = process.env.AUTH_PUBLIC_URL || 'https://auth.octopustechnology.net';
 
 // Machine-to-machine access for cortex, on the docker network only — same
-// x-internal-secret pattern budget uses. Entries are keyed by username and a bot
-// has no session, so internal calls act as one fixed owner.
+// x-internal-secret pattern budget uses.
+//
+// The secret proves WHICH SERVICE is calling. It has never proved who it is
+// calling FOR, and these routes used to answer that question with a constant:
+// every internal read and write landed on MEDIA_OWNER regardless of who was
+// talking to the bot. With one account that was invisible. With two, a second
+// person asking Neith "what am I watching?" got the owner's list, and anything
+// they added went into the owner's library.
+//
+// Callers now name the account with X-Service-User, which is the fleet
+// convention (see octopus-cortex/server/acting-user.js `serviceUserHeader`, and
+// octopus-health's `serviceUser()` which this mirrors). MEDIA_OWNER remains the
+// default for a call that names nobody, because scheduled work — briefings and
+// nudges — legitimately has no acting user and is the owner's by definition.
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET || '';
 const MEDIA_OWNER     = process.env.MEDIA_OWNER     || 'psychopathy';
+
+// Same shape octopus-auth enforces at registration, so a name that could not be
+// registered cannot be conjured here either.
+const USERNAME_RE = /^[A-Za-z0-9_-]{3,30}$/;
+
+/** Which account an internal call is acting for. */
+function serviceUser(req) {
+  const raw = req.headers['x-service-user']
+           || (req.body && (req.body.username || req.body.user))
+           || (req.query && (req.query.username || req.query.user))
+           || MEDIA_OWNER;
+  const name = String(raw).trim();
+  if (!USERNAME_RE.test(name)) {
+    throw Object.assign(new Error(`invalid user "${name}"`), { statusCode: 400 });
+  }
+  return name;
+}
 
 // ── Stateless SSO auth ────────────────────────────────────────────────────────
 const SSO_COOKIE   = 'octopus_sso';
@@ -92,7 +121,15 @@ async function build() {
     if (!INTERNAL_SECRET || given !== INTERNAL_SECRET) {
       return reply.code(401).send({ error: 'Invalid internal secret.' });
     }
-    req.user = { username: MEDIA_OWNER, role: 'internal' };
+    // Resolve the acting account HERE, once, so every internal route below
+    // reads req.user.username — identical to the web routes. A route that
+    // forgets is then a route using the wrong variable name, not one silently
+    // defaulting to the owner.
+    try {
+      req.user = { username: serviceUser(req), role: 'internal' };
+    } catch (err) {
+      return reply.code(err.statusCode || 400).send({ error: err.message });
+    }
   });
 
   // ── Set req.user from SSO cookie ──────────────────────────────────────────────
@@ -141,9 +178,9 @@ async function build() {
 
   // Resolve a title to one entry. Exact (case-insensitive) wins; otherwise a
   // unique substring match. Ambiguity is an error, never a guess.
-  async function findByTitle(title) {
+  async function findByTitle(user_id, title) {
     const { rows } = await pool.query(
-      `${ENTRY_SELECT} WHERE me.user_id = $1 AND me.title IS NOT NULL`, [MEDIA_OWNER],
+      `${ENTRY_SELECT} WHERE me.user_id = $1 AND me.title IS NOT NULL`, [user_id],
     );
     const needle = String(title || '').trim().toLowerCase();
     if (!needle) return { error: 'A title is required.' };
@@ -160,7 +197,7 @@ async function build() {
   app.get('/api/internal/entries', async (req) => {
     const { status = 'watching', type } = req.query;
     const conditions = ['me.user_id = $1'];
-    const params = [MEDIA_OWNER];
+    const params = [req.user.username];
     if (status && status !== 'all') { params.push(status); conditions.push(`me.status = $${params.length}`); }
     if (type)                       { params.push(type);   conditions.push(`me.type = $${params.length}`); }
     const { rows } = await pool.query(
@@ -178,7 +215,7 @@ async function build() {
 
   app.post('/api/internal/progress', async (req, reply) => {
     const { title, season, episode, advance } = req.body || {};
-    const found = await findByTitle(title);
+    const found = await findByTitle(req.user.username, title);
     if (found.error) return reply.code(404).send({ error: found.error });
     const e = found.entry;
     if (e.type !== 'anime' && e.type !== 'tv') {
@@ -216,7 +253,7 @@ async function build() {
 
     const { rows: [entry] } = await pool.query(
       `INSERT INTO media_entries (user_id, type, title, notes) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [MEDIA_OWNER, type, title.trim(), notes?.trim() || null],
+      [req.user.username, type, title.trim(), notes?.trim() || null],
     );
     if (type === 'anime' || type === 'tv') {
       await pool.query(
