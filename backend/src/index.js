@@ -17,6 +17,13 @@ const pool = new Pool({
 const AUTH_URL      = process.env.AUTH_SERVICE_URL || 'http://octopus-auth:3002';
 const AUTH_LOGIN_BASE = process.env.AUTH_PUBLIC_URL || 'https://auth.octopustechnology.net';
 
+// Where this app lives on the internet. Was `req.headers.host || <this>`, which
+// looks like it has a safe fallback and does not: `||` only fires when the header
+// is MISSING, and the header was present and wrong — the proxy passes the
+// container's own name, so logout redirected to https://<container-id>:3000/.
+// A wrong value beats an absent one to the fallback every time.
+const PUBLIC_URL = (process.env.PUBLIC_URL || 'https://media.octopustechnology.net').replace(/\/+$/, '');
+
 // Machine-to-machine access for cortex, on the docker network only — same
 // x-internal-secret pattern budget uses.
 //
@@ -157,12 +164,12 @@ async function build() {
   });
 
   app.post('/api/auth/logout', async (req, reply) => {
-    const back = encodeURIComponent(`https://${req.headers.host || 'media.octopustechnology.net'}/`);
+    const back = encodeURIComponent(`${PUBLIC_URL}/`);
     return reply.redirect(`${AUTH_LOGIN_BASE}/logout?redirect=${back}`, 302);
   });
 
   app.get('/api/auth/logout', async (req, reply) => {
-    const back = encodeURIComponent(`https://${req.headers.host || 'media.octopustechnology.net'}/`);
+    const back = encodeURIComponent(`${PUBLIC_URL}/`);
     return reply.redirect(`${AUTH_LOGIN_BASE}/logout?redirect=${back}`, 302);
   });
 

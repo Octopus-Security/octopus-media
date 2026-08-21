@@ -14,6 +14,12 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3001
+      # The public origin, used to build the sign-in/sign-out return URLs. The
+      # code defaults to the same value, so this is documentation and an override
+      # rather than a requirement. Deliberately NOT set on the frontend: its
+      # middleware runs in Next's edge runtime, where process.env is inlined at
+      # build time, so a runtime variable there would look wired up and do nothing.
+      - PUBLIC_URL=${PUBLIC_URL:-https://media.octopustechnology.net}
       - PGHOST=db
       - PGPORT=5432
       - PGUSER=${POSTGRES_USER:-media}
