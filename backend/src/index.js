@@ -5,6 +5,7 @@ const cors         = require('@fastify/cors');
 const cookie       = require('@fastify/cookie');
 const axios        = require('axios');
 const { Pool }     = require('pg');
+const { BUILD, STARTED_AT } = require('./build');
 
 const pool = new Pool({
   host:     process.env.PGHOST     || 'db',
@@ -151,12 +152,32 @@ async function build() {
 
   // ── Auth gate ─────────────────────────────────────────────────────────────────
   app.addHook('preHandler', async (req, reply) => {
-    if (req.url === '/health' || req.url.startsWith('/api/auth/')) return;
+    // /health and /api/build answer before the gate, and both compare the path
+    // WITHOUT the query string. `req.url === '/health'` is a whole-URL match, so
+    // /health?probe=1 was falling through to the 401 — a monitor appending a
+    // cache-buster got "not authenticated" from a service that was perfectly up.
+    const bare = req.url.split('?')[0];
+    if (bare === '/health' || bare === '/api/build' || bare.startsWith('/api/auth/')) return;
     if (!req.user) return reply.code(401).send({ error: 'Not authenticated' });
   });
 
   // ── Health ────────────────────────────────────────────────────────────────────
   app.get('/health', async () => ({ ok: true, service: 'octopus-media-backend' }));
+
+  // ── Deploy verification ───────────────────────────────────────────────────
+  //
+  // Portainer polls and reports back to nobody, so without a value that moves
+  // when the code moves, a deploy that never landed and one that landed without
+  // helping look identical from outside. Derived, not a pasted constant, and
+  // exempt from the auth gate for the same reason /health is: it has to answer
+  // when a login is exactly what is broken. `unknown` is never `current`.
+  app.get('/api/build', async () => ({
+    ok: true,
+    service: 'octopus-media-backend',
+    build: BUILD,
+    startedAt: STARTED_AT,
+  }));
+
 
   // ── Auth ──────────────────────────────────────────────────────────────────────
   app.post('/api/auth/login', async (req, reply) => {
