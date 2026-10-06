@@ -6,6 +6,7 @@ const cookie       = require('@fastify/cookie');
 const axios        = require('axios');
 const { Pool }     = require('pg');
 const { BUILD, STARTED_AT } = require('./build');
+const { createAppGate } = require('./appAccess');
 
 const pool = new Pool({
   host:     process.env.PGHOST     || 'db',
@@ -16,6 +17,14 @@ const pool = new Pool({
 });
 
 const AUTH_URL      = process.env.AUTH_SERVICE_URL || 'http://octopus-auth:3002';
+// May THIS signed-in account use media at all? Hiding the hub tile is
+// presentation; this is the enforcement (see appAccess.js).
+const appAccessGate = createAppGate({
+  authUrl: AUTH_URL,
+  slug:    process.env.APP_ACCESS_SLUG || 'media',
+  appName: 'Media',
+});
+
 const AUTH_LOGIN_BASE = process.env.AUTH_PUBLIC_URL || 'https://auth.octopustechnology.net';
 
 // Where this app lives on the internet. Was `req.headers.host || <this>`, which
@@ -161,6 +170,16 @@ async function build() {
     if (!req.user) return reply.code(401).send({ error: 'Not authenticated' });
   });
 
+  // ── App access gate ───────────────────────────────────────────────────────
+  // After sign-in is established, before every route. Internal (cortex) calls
+  // are skipped inside the gate. /health, /api/build and /api/auth/* stay open
+  // so a denied person can still see who they are and sign out.
+  app.addHook('preHandler', async (req, reply) => {
+    const bare = req.url.split('?')[0];
+    if (bare === '/health' || bare === '/api/build' || bare.startsWith('/api/auth/')) return;
+    return appAccessGate(req, reply);
+  });
+
   // ── Health ────────────────────────────────────────────────────────────────────
   app.get('/health', async () => ({ ok: true, service: 'octopus-media-backend' }));
 
@@ -176,7 +195,25 @@ async function build() {
     service: 'octopus-media-backend',
     build: BUILD,
     startedAt: STARTED_AT,
+    // Read off the mounted gate, never typed here; absent when none is mounted.
+    ...(appAccessGate.slug ? { gate: appAccessGate.slug } : {}),
   }));
+
+  // The page-navigation half. The Next middleware cannot reuse the API gate (it
+  // only sees a redirect-or-not), so it asks this: 200 allowed, 401 signed out,
+  // 403 signed in but not entitled. Lives under /api/auth/ so it is outside the
+  // gate hook above and answers rather than being refused by it.
+  app.get('/api/auth/access', async (req, reply) => {
+    if (!req.user) return reply.code(401).send({ error: 'Not authenticated' });
+    const ok = !appAccessGate.slug || req.user.role === 'internal'
+      || await appAccessGate.allowed({
+        username: req.user.username,
+        cookie: req.headers.cookie,
+        authorization: req.headers.authorization,
+      });
+    if (!ok) return reply.code(403).send({ error: appAccessGate.message, code: 'no_access' });
+    return { ok: true };
+  });
 
 
   // ── Auth ──────────────────────────────────────────────────────────────────────

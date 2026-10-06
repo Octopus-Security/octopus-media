@@ -51,7 +51,7 @@ export async function middleware(req: NextRequest) {
 
   let status: number;
   try {
-    const res = await fetch(`${BACKEND_URL}/api/auth/me`, {
+    const res = await fetch(`${BACKEND_URL}/api/auth/access`, {
       headers: { cookie },
       cache: 'no-store',
     });
@@ -65,6 +65,19 @@ export async function middleware(req: NextRequest) {
   if (status === 401) {
     const returnUrl = encodeURIComponent(returnUrlFor(req));
     return NextResponse.redirect(`${AUTH_LOGIN_BASE}/login?redirect=${returnUrl}`);
+  }
+
+  // Signed in, but this account does not include Media. /api/ calls are already
+  // refused by the backend with 403 JSON; this is the page half.
+  if (status === 403) {
+    return new NextResponse(
+      '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>No access</title>'
+      + '<body style="font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem">'
+      + '<h1 style="font-size:1.4rem">No access yet</h1><p>Your account does not include Media.</p>'
+      + `<p><a href="${AUTH_LOGIN_BASE}/">Back to the hub</a></p></body>`,
+      { status: 403, headers: { 'content-type': 'text/html; charset=utf-8' } },
+    );
   }
 
   // Logged in — don't let the /login page redirect to auth again

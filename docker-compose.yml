@@ -27,6 +27,9 @@ services:
       - PGDATABASE=${POSTGRES_DB:-media}
       - SESSION_SECRET=${SESSION_SECRET}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://octopus-auth:3002}
+      # Which hub app this service is, for the per-user access gate (appAccess.js).
+      # The code defaults to the same slug; stated so changing it is a stack variable.
+      - APP_ACCESS_SLUG=${APP_ACCESS_SLUG:-media}
       # Machine-to-machine auth for cortex (chat-driven show/episode updates).
       - INTERNAL_SECRET=${INTERNAL_SECRET:-}
       - MEDIA_OWNER=${MEDIA_OWNER:-psychopathy}
