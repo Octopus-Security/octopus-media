@@ -4,7 +4,17 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Octopus Media',
   description: 'Track your anime, movies, TV shows, and music.',
-  icons: { icon: '/favicon.svg' },
+  // Brand pack favicon, served by octopus-auth (the pull model: auth hosts
+  // the assets, this app holds only its slug). See
+  // octopus-vault/FAVICON-PACK-SPEC.md §5. Next's metadata API has no field
+  // for crossorigin on the manifest <link> the way the spec's three-line
+  // block carries elsewhere (EJS/static apps) — that is a gap in what this
+  // framework's typed metadata exposes, not a choice made here.
+  icons: {
+    icon: 'https://auth.octopustechnology.net/brand/media/favicon.svg',
+    apple: 'https://auth.octopustechnology.net/brand/media/apple-touch-icon.png',
+  },
+  manifest: 'https://auth.octopustechnology.net/brand/media/site.webmanifest',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
