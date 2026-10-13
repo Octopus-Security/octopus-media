@@ -4,7 +4,21 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Octopus Media',
   description: 'Track your anime, movies, TV shows, and music.',
-  icons: { icon: '/favicon.svg' },
+  // Brand pack favicon, served by octopus-auth (the pull model: auth hosts
+  // the assets, this app holds only its slug). See
+  // octopus-vault/FAVICON-PACK-SPEC.md §5. The manifest fetch must be
+  // anonymous (uncredentialed) — auth serves /brand/* publicly with
+  // Access-Control-Allow-Origin: *, which browsers refuse for a credentialed
+  // request. Next's typed Metadata API has no crossorigin field for the
+  // manifest <link>, but omitting it is correct here rather than a gap: a
+  // manifest fetch's default credentials mode is already "omit"/anonymous,
+  // the same thing the EJS/static apps spell out explicitly as
+  // crossorigin="anonymous".
+  icons: {
+    icon: 'https://auth.octopustechnology.net/brand/media/favicon.svg',
+    apple: 'https://auth.octopustechnology.net/brand/media/apple-touch-icon.png',
+  },
+  manifest: 'https://auth.octopustechnology.net/brand/media/site.webmanifest',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
