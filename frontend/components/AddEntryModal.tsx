@@ -63,9 +63,9 @@ export default function AddEntryModal({ type, onClose, onCreated }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
       <div
-        className="bg-surface border border-border rounded-card w-[440px] max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-surface border border-border rounded-card w-full max-w-[440px] max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
