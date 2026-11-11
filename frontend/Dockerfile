@@ -7,6 +7,9 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# public/ is optional in Next.js and this app has none. Create it so the runner's COPY always has a source:
+# the classic docker builder (octopus-deployer's) refuses a COPY glob that matches nothing (2026-11-11).
+RUN mkdir -p public
 RUN npm run build
 
 FROM node:22-alpine AS runner
@@ -14,7 +17,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN apk upgrade --no-cache
 RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
-COPY --from=builder /app/public* ./public/
+COPY --from=builder /app/public ./public/
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
 # Strip npm from the runtime image. Nothing here runs it — the CMD is a bare
