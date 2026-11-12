@@ -17,3 +17,10 @@ h1, h2, h3, h4 { color: #e8e8e8; margin-top: 0; }
 ::-webkit-scrollbar-track { background: #111; }
 ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #2ecc71; }
+
+/* Layout & text rules (octopus-kit docs/layout.md rules 1-7): only what this app did not already have. */
+html { background-color: #0d0d0d; }
+body { overflow-x: clip; overflow-wrap: break-word; hyphens: manual; min-height: 100vh; min-height: 100dvh; }
+code, kbd { overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+img, video, svg { max-width: 100%; }
+img, video { height: auto; }
