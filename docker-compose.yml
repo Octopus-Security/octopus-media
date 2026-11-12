@@ -13,6 +13,7 @@ services:
     container_name: octopus_media_backend
     restart: unless-stopped
     environment:
+      - NODE_ENV=${NODE_ENV:-production}
       - PORT=3001
       # The public origin, used to build the sign-in/sign-out return URLs. The
       # code defaults to the same value, so this is documentation and an override
