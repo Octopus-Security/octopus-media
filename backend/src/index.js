@@ -7,6 +7,7 @@ const axios        = require('axios');
 const { Pool }     = require('pg');
 const { BUILD, STARTED_AT } = require('./build');
 const { createAppGate } = require('./appAccess');
+const safeguards = require('./safeguards');
 
 const pool = new Pool({
   host:     process.env.PGHOST     || 'db',
@@ -117,7 +118,22 @@ const ENTRY_SELECT = `
 `;
 
 async function build() {
-  const app = Fastify({ logger: true });
+  // Request logs as before, but an error is logged as name + code only: a database error's message
+  // quotes the value it choked on (HIPAA map, 2026-11-12 sweep).
+  const app = Fastify({ logger: { serializers: { err: (e) => ({ type: e && e.name, code: e && e.code }) } } });
+
+  // Security headers on every answer, reusing the Express-shaped middleware from the kit copy, and
+  // no-store by default for a request that carries a session (a route that sets its own
+  // Cache-Control afterwards wins). HSTS follows X-Forwarded-Proto from the proxy.
+  const sendSecureHeaders = safeguards.secureHeaders();
+  app.addHook('onRequest', (req, reply, done) => {
+    const secure = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+    sendSecureHeaders({ secure }, { setHeader: (k, v) => reply.header(k, v) }, () => {});
+    if (safeguards.readCookie(req.headers.cookie, 'octopus_sso') !== null || /^Bearer\s/i.test(req.headers.authorization || '')) {
+      reply.header('cache-control', 'no-store');
+    }
+    done();
+  });
 
   // ── Plugins ──────────────────────────────────────────────────────────────────
   await app.register(cors, { origin: process.env.CORS_ORIGIN || true, credentials: true });
@@ -528,6 +544,6 @@ async function build() {
 build().then(app => {
   app.listen({ port: parseInt(process.env.PORT || '3001'), host: '0.0.0.0' });
 }).catch(err => {
-  console.error(err);
+  console.error(safeguards.safeError(err));
   process.exit(1);
 });
